@@ -1,0 +1,30 @@
+fastapi==0.115.0
+uvicorn==0.30.6
+pymilvus==2.4.4
+pydantic==2.9.2
+loguru==0.7.2
+python-multipart==0.0.12
+python-dotenv==1.0.1
+cryptography==43.0.1
+typer==0.12.5
+grpcio==1.59.3
+
+# LangChain v0.3 相关
+langchain==0.3.7
+langchain-community==0.3.5
+langchain-milvus==0.1.6
+langchain-text-splitters==0.3.2
+langchain-core==0.3.15
+
+# 嵌入模型
+sentence-transformers==3.0.1
+transformers==4.45.2
+
+# 文档解析
+pypdf==4.3.1
+python-docx==1.1.2
+unstructured==0.15.12
+tiktoken==0.8.0
+
+# 其他工具
+numpy==1.26.4
