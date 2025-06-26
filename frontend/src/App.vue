@@ -26,7 +26,10 @@
             multiple
           >
             <el-icon><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖拽或点击上传 PDF/Markdown/TXT 文件</div>
+            <div class="el-upload__text">拖拽或点击上传文件</div>
+            <template #tip>
+              <div class="el-upload__tip">支持 PDF、Markdown(.md/.markdown)、TXT 文件，最大 50MB</div>
+            </template>
           </el-upload>
           <!-- 已上传文件列表 -->
           <el-table :data="uploadedFiles" style="width: 100%; margin-top: 16px;" v-if="uploadedFiles.length">
@@ -34,10 +37,69 @@
             <el-table-column prop="status" label="状态" />
             <el-table-column label="操作">
               <template #default="scope">
+                <el-button size="small" type="primary" @click="previewFile(scope.row)">预览</el-button>
                 <el-button size="small" type="danger" @click="removeFile(scope.$index)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
+          
+          <!-- 文件预览功能 -->
+          <div v-if="previewState.show" class="file-preview" @click.self="closePreview">
+            <div class="preview-modal">
+              <div class="preview-header">
+                <span class="preview-title">文件预览: {{ previewData.filename }}</span>
+                <el-button size="small" @click="closePreview" type="info">
+                  <el-icon><Close /></el-icon>
+                </el-button>
+              </div>
+              <div class="preview-content">
+                <!-- PDF 预览 -->
+                <iframe 
+                  v-if="previewData.type === 'pdf'" 
+                  :src="previewData.url" 
+                  class="preview-iframe"
+                ></iframe>
+                <!-- 文本文件预览 -->
+                <div v-else-if="previewData.type === 'text'" class="preview-text">
+                  <!-- Markdown 文件预览 -->
+                  <div v-if="isMarkdownFile(previewData.filename)" class="markdown-preview">
+                    <!-- 模式切换按钮 -->
+                    <div class="preview-toolbar">
+                      <el-radio-group v-model="markdownViewMode" size="small">
+                        <el-radio-button label="rendered">渲染模式</el-radio-button>
+                        <el-radio-button label="source">源码模式</el-radio-button>
+                      </el-radio-group>
+                    </div>
+                    <!-- 渲染模式 -->
+                    <div 
+                      v-if="markdownViewMode === 'rendered'" 
+                      class="markdown-body" 
+                      v-html="renderedMarkdown"
+                    ></div>
+                    <!-- 源码模式 -->
+                    <pre 
+                      v-else 
+                      class="markdown-source"
+                      v-html="highlightedMarkdown"
+                    ></pre>
+                  </div>
+                  <!-- 普通文本文件预览 -->
+                  <pre v-else class="text-content">{{ previewData.content }}</pre>
+                </div>
+                <!-- 加载中状态 -->
+                <div v-else-if="previewData.loading" class="preview-loading">
+                  <el-icon class="is-loading"><Loading /></el-icon>
+                  <span>加载预览中...</span>
+                </div>
+                <!-- 错误状态 -->
+                <div v-else-if="previewData.error" class="preview-error">
+                  <el-icon><Warning /></el-icon>
+                  <span>{{ previewData.error }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
           <!-- 参数设置 -->
           <el-form :model="embedParams" label-width="80px" class="param-form">
             <el-form-item label="嵌入模型">
@@ -57,16 +119,18 @@
             </el-form-item>
             
             <!-- 文档嵌入按钮 -->
-            <el-form-item>
+            <div class="embed-button-container">
               <el-button 
                 type="primary" 
+                size="small"
                 @click="handleDocumentEmbed" 
                 :disabled="uploadedFiles.length === 0 || isEmbedding"
                 :loading="isEmbedding"
+                class="embed-button"
               >
-                {{ isEmbedding ? '文档嵌入中...' : '开始文档嵌入' }}
+                {{ isEmbedding ? '嵌入中...' : '文档嵌入' }}
               </el-button>
-            </el-form-item>
+            </div>
           </el-form>
           
           <!-- 嵌入进度显示 -->
@@ -143,9 +207,13 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { UploadFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Loading, Close, Warning } from '@element-plus/icons-vue'
+import { marked } from 'marked'
+import hljs from 'highlight.js'
+import 'highlight.js/styles/github.css'
+import 'github-markdown-css/github-markdown-light.css'
 
 // 文件上传相关
 const uploadedFiles = ref([])
@@ -173,15 +241,24 @@ const handleUploadError = () => {
 }
 
 const beforeUpload = (file) => {
-  const allowedTypes = [
-    'application/pdf',
-    'text/markdown',
-    'text/plain'
-  ]
-  if (!allowedTypes.includes(file.type)) {
-    ElMessage.error('仅支持 PDF、Markdown、TXT 文件')
+  // 检查文件扩展名而不是MIME类型，因为某些文件的MIME类型可能不标准
+  const fileName = file.name.toLowerCase()
+  const allowedExtensions = ['.pdf', '.md', '.markdown', '.txt']
+  
+  const isValidFile = allowedExtensions.some(ext => fileName.endsWith(ext))
+  
+  if (!isValidFile) {
+    ElMessage.error('仅支持 PDF、Markdown(.md/.markdown)、TXT 文件')
     return false
   }
+  
+  // 检查文件大小（可选，比如限制50MB）
+  const isLt50M = file.size / 1024 / 1024 < 50
+  if (!isLt50M) {
+    ElMessage.error('文件大小不能超过 50MB')
+    return false
+  }
+  
   return true
 }
 
@@ -309,6 +386,117 @@ const handleTestsetSuccess = () => {
 }
 const handleTestsetError = () => {
   ElMessage.error('测试集上传失败')
+}
+
+// 文件预览相关
+const previewState = ref({
+  show: false
+})
+const previewData = ref({
+  filename: '',
+  type: '',
+  url: '',
+  content: '',
+  loading: false,
+  error: null
+})
+
+// Markdown 预览相关
+const markdownViewMode = ref('rendered')
+
+// 配置 marked
+marked.setOptions({
+  highlight: function(code, lang) {
+    const language = hljs.getLanguage(lang) ? lang : 'plaintext'
+    return hljs.highlight(code, { language }).value
+  },
+  langPrefix: 'hljs language-',
+  breaks: true,
+  gfm: true
+})
+
+// 判断是否为 Markdown 文件
+const isMarkdownFile = (filename) => {
+  if (!filename) return false
+  const ext = filename.toLowerCase()
+  return ext.endsWith('.md') || ext.endsWith('.markdown')
+}
+
+// 渲染 Markdown 内容
+const renderedMarkdown = computed(() => {
+  if (!previewData.value.content || !isMarkdownFile(previewData.value.filename)) {
+    return ''
+  }
+  try {
+    return marked(previewData.value.content)
+  } catch (error) {
+    console.error('Markdown 渲染失败:', error)
+    return '<p>Markdown 渲染失败</p>'
+  }
+})
+
+// 高亮 Markdown 源码
+const highlightedMarkdown = computed(() => {
+  if (!previewData.value.content) return ''
+  try {
+    return hljs.highlight(previewData.value.content, { language: 'markdown' }).value
+  } catch (error) {
+    console.error('语法高亮失败:', error)
+    return previewData.value.content
+  }
+})
+
+const previewFile = async (file) => {
+  try {
+    // 重置预览数据
+    previewData.value = {
+      filename: file.filename,
+      type: '',
+      url: '',
+      content: '',
+      loading: true,
+      error: null
+    }
+    previewState.value.show = true
+    
+    // 获取文件内容进行预览
+    const response = await fetch(`http://localhost:8001/api/preview/${file.filename}`)
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+    
+    const result = await response.json()
+    
+    // 更新预览数据
+    previewData.value.loading = false
+    previewData.value.type = result.type
+    
+    if (result.type === 'pdf') {
+      previewData.value.url = `http://localhost:8001/api/file/${file.filename}`
+    } else if (result.type === 'text') {
+      previewData.value.content = result.content || '文件内容为空'
+    }
+    
+  } catch (error) {
+    console.error('预览错误:', error)
+    previewData.value.loading = false
+    previewData.value.error = '无法加载文件内容，请检查文件是否存在'
+    ElMessage.error('文件预览失败')
+  }
+}
+
+const closePreview = () => {
+  previewState.value.show = false
+  markdownViewMode.value = 'rendered' // 重置为渲染模式
+  previewData.value = {
+    filename: '',
+    type: '',
+    url: '',
+    content: '',
+    loading: false,
+    error: null
+  }
 }
 </script>
 
@@ -483,9 +671,7 @@ const handleTestsetError = () => {
   text-align: center;
 }
 
-.param-form .el-button {
-  width: 100%;
-}
+
 
 /* 响应式适配 */
 @media (max-width: 1024px) {
@@ -516,6 +702,11 @@ const handleTestsetError = () => {
   .logo {
     padding-left: 0;
   }
+  
+  .preview-modal {
+    width: 95%;
+    height: 90%;
+  }
 }
 
 @media (max-width: 768px) {
@@ -540,5 +731,228 @@ const handleTestsetError = () => {
   .query-form .el-input-number {
     max-width: 100%;
   }
+  
+  .preview-modal {
+    width: 98%;
+    height: 95%;
+  }
+  
+  .preview-header {
+    padding: 12px 16px;
+  }
+  
+  .preview-title {
+    font-size: 14px;
+  }
+}
+
+.file-preview {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+
+.preview-modal {
+  background: #fff;
+  border-radius: 8px;
+  width: 85%;
+  height: 85%;
+  max-width: 1200px;
+  max-height: 800px;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.preview-header {
+  background: #f5f7fa;
+  padding: 16px 20px;
+  border-radius: 8px 8px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.preview-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: #303133;
+}
+
+.preview-content {
+  flex: 1;
+  padding: 20px;
+  overflow: auto;
+  background: #fff;
+  border-radius: 0 0 8px 8px;
+}
+
+.preview-iframe {
+  width: 100%;
+  height: 100%;
+  border: none;
+  border-radius: 4px;
+}
+
+.preview-text {
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.text-content {
+  margin: 0;
+  padding: 0;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  line-height: 1.6;
+  color: #606266;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  background: transparent;
+  border: none;
+  flex: 1;
+}
+
+/* Markdown 预览样式 */
+.markdown-preview {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.preview-toolbar {
+  padding: 12px 16px;
+  border-bottom: 1px solid #e4e7ed;
+  background: #f8f9fa;
+  flex-shrink: 0;
+}
+
+.markdown-body {
+  flex: 1;
+  padding: 20px;
+  overflow-y: auto;
+  background: #fff;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.markdown-source {
+  flex: 1;
+  margin: 0;
+  padding: 20px;
+  overflow-y: auto;
+  background: #f6f8fa;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  border: none;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+/* 自定义 Markdown 样式覆盖 */
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4,
+.markdown-body h5,
+.markdown-body h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+}
+
+.markdown-body h1 {
+  font-size: 2em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.markdown-body h2 {
+  font-size: 1.5em;
+  border-bottom: 1px solid #eaecef;
+  padding-bottom: 0.3em;
+}
+
+.markdown-body code {
+  background-color: rgba(175, 184, 193, 0.2);
+  padding: 0.2em 0.4em;
+  border-radius: 3px;
+  font-size: 85%;
+}
+
+.markdown-body pre {
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  padding: 16px;
+  overflow: auto;
+  font-size: 85%;
+  line-height: 1.45;
+}
+
+.markdown-body blockquote {
+  padding: 0 1em;
+  color: #6a737d;
+  border-left: 0.25em solid #dfe2e5;
+  margin: 0 0 16px 0;
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 16px 0;
+}
+
+.markdown-body table th,
+.markdown-body table td {
+  padding: 6px 13px;
+  border: 1px solid #dfe2e5;
+}
+
+.markdown-body table th {
+  background-color: #f6f8fa;
+  font-weight: 600;
+}
+
+.preview-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  gap: 12px;
+  color: #909399;
+}
+
+.preview-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  gap: 12px;
+  color: #909399;
+}
+
+.embed-button-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.embed-button {
+  width: auto;
 }
 </style>
