@@ -1,7 +1,9 @@
 fastapi==0.115.0
 uvicorn==0.30.6
-pymilvus==2.4.4
+pymilvus==2.4.10
+# milvus-lite==2.4.12  # Milvus Lite 版本 - Windows 不支持，请在 Linux/macOS 环境下使用
 pydantic==2.9.2
+pydantic-settings==2.6.0  # 配置管理
 loguru==0.7.2
 python-multipart==0.0.12
 python-dotenv==1.0.1

@@ -100,6 +100,40 @@
             </div>
           </div>
           
+          <!-- 数据库配置 -->
+          <el-form :model="databaseConfig"  class="param-form">
+            <!-- 数据库类型和路径在同一行 -->
+            <div class="database-config-row">
+              <el-form-item label="数据库类型" class="db-type-item">
+                <el-select v-model="databaseConfig.db_type" placeholder="选择数据库类型" @change="handleDatabaseTypeChange">
+                  <el-option label="Milvus Lite 版" value="milvus_lite" />
+                  <el-option label="Milvus 标准版" value="milvus_standard" />
+                </el-select>
+              </el-form-item>
+              
+              <!-- Milvus Lite 配置 -->
+              <el-form-item v-if="databaseConfig.db_type === 'milvus_lite'" label="数据库路径" class="db-path-item">
+                <el-input v-model="databaseConfig.milvus_lite.db_path" placeholder="./milvus_lite.db" />
+              </el-form-item>
+              
+              <!-- Milvus 标准版服务器配置 -->
+              <el-form-item v-if="databaseConfig.db_type === 'milvus_standard'" label="服务器" class="db-path-item">
+                <el-input 
+                  :value="databaseConfig.milvus_standard.host + ':' + databaseConfig.milvus_standard.port" 
+                  placeholder="localhost:19530" 
+                  @input="handleServerInput"
+                />
+              </el-form-item>
+              
+              <div class="db-buttons">
+                <el-button type="success" size="small" @click="testDatabaseConnection" :style="{ display: 'inline-block' }">测试连接</el-button>
+                <el-button type="primary" size="small" @click="saveDatabaseConfig" :style="{ display: 'inline-block' }">保存配置</el-button>
+              </div>
+            </div>
+            
+            <!-- Milvus 标准版详细配置已移除，避免重复配置 -->
+          </el-form>
+          
           <!-- 参数设置 -->
           <el-form :model="embedParams" label-width="80px" class="param-form">
             <el-form-item label="嵌入模型">
@@ -207,13 +241,18 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { UploadFilled, Loading, Close, Warning } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import hljs from 'highlight.js'
 import 'highlight.js/styles/github.css'
 import 'github-markdown-css/github-markdown-light.css'
+
+// 组件加载时初始化
+onMounted(() => {
+  loadDatabaseConfig()
+})
 
 // 文件上传相关
 const uploadedFiles = ref([])
@@ -265,6 +304,20 @@ const beforeUpload = (file) => {
 const removeFile = (idx) => {
   uploadedFiles.value.splice(idx, 1)
 }
+
+// 数据库配置
+const databaseConfig = ref({
+  db_type: 'milvus_lite',
+  milvus_standard: {
+    host: 'localhost',
+    port: 19530,
+    timeout: 60
+  },
+  milvus_lite: {
+    db_path: './milvus_lite.db',
+    dim: 384
+  }
+})
 
 // 嵌入参数
 const embedParams = ref({
@@ -415,6 +468,91 @@ marked.setOptions({
   gfm: true
 })
 
+// 数据库配置相关方法
+const loadDatabaseConfig = async () => {
+  try {
+    const response = await fetch('http://localhost:8001/api/config/database')
+    if (response.ok) {
+      const config = await response.json()
+      databaseConfig.value.db_type = config.db_type
+      databaseConfig.value.milvus_standard = config.milvus_standard
+      databaseConfig.value.milvus_lite = config.milvus_lite
+    }
+  } catch (error) {
+    console.error('加载数据库配置失败:', error)
+  }
+}
+
+const handleDatabaseTypeChange = () => {
+  console.log('数据库类型切换为:', databaseConfig.value.db_type)
+}
+
+// 处理服务器输入（host:port格式）
+const handleServerInput = (value) => {
+  const parts = value.split(':')
+  if (parts.length === 2) {
+    databaseConfig.value.milvus_standard.host = parts[0].trim()
+    const port = parseInt(parts[1].trim())
+    if (!isNaN(port)) {
+      databaseConfig.value.milvus_standard.port = port
+    }
+  } else if (parts.length === 1) {
+    databaseConfig.value.milvus_standard.host = parts[0].trim()
+  }
+}
+
+const testDatabaseConnection = async () => {
+  try {
+    const config = databaseConfig.value.db_type === 'milvus_standard' 
+      ? databaseConfig.value.milvus_standard 
+      : databaseConfig.value.milvus_lite
+    
+    const response = await fetch('http://localhost:8001/api/config/database/test', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        db_type: databaseConfig.value.db_type,
+        config: config
+      })
+    })
+    
+    const result = await response.json()
+    
+    if (result.status === 'success') {
+      ElMessage.success(result.message)
+    } else {
+      ElMessage.error(result.message)
+    }
+  } catch (error) {
+    console.error('测试数据库连接失败:', error)
+    ElMessage.error('测试连接失败，请检查网络连接')
+  }
+}
+
+const saveDatabaseConfig = async () => {
+  try {
+    const response = await fetch('http://localhost:8001/api/config/database', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(databaseConfig.value)
+    })
+    
+    if (response.ok) {
+      ElMessage.success('数据库配置保存成功！')
+    } else {
+      const error = await response.json()
+      ElMessage.error(`保存失败: ${error.detail}`)
+    }
+  } catch (error) {
+    console.error('保存数据库配置失败:', error)
+    ElMessage.error('保存配置失败，请重试')
+  }
+}
+
 // 判断是否为 Markdown 文件
 const isMarkdownFile = (filename) => {
   if (!filename) return false
@@ -508,6 +646,22 @@ const closePreview = () => {
   box-sizing: border-box;
 }
 
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow-x: hidden;
+}
+
+#app {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  max-width: 100vw; /* 自适应宽度 */
+}
+
 .main-container {
   width: 100vw;
   height: 100vh;
@@ -515,6 +669,8 @@ const closePreview = () => {
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  margin: 0;
+  padding: 0;
 }
 
 .header {
@@ -531,11 +687,12 @@ const closePreview = () => {
   flex-shrink: 0;
   letter-spacing: 2px;
   box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+  margin: 0;
 }
 
 .logo {
   user-select: none;
-  padding-left: 24px; /* 单独给logo添加左边距 */
+  padding-left: 16px; /* 减少logo左边距，让整体更贴近边缘 */
 }
 
 .header-right {
@@ -547,9 +704,10 @@ const closePreview = () => {
 .content {
   flex: 1;
   display: flex;
-  gap: 24px;
-  padding: 0; /* 完全移除content的padding */
+  gap: 2vw; /* 改为视口宽度的2% */
+  padding: 0;
   overflow: hidden;
+  margin: 0;
 }
 
 .left-panel {
@@ -557,9 +715,9 @@ const closePreview = () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 2vh; /* 改为视口高度的2% */
   overflow-y: auto;
-  padding: 24px 0 24px 24px; /* 上下24px，右侧0，左侧24px */
+  padding: 2vh 0 2vh 2vw; /* 使用视口单位替代固定像素 */
 }
 
 .right-panel {
@@ -567,9 +725,9 @@ const closePreview = () => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 24px;
+  gap: 2vh; /* 改为视口高度的2% */
   overflow-y: auto;
-  padding: 24px 24px 24px 0; /* 上下24px，右侧24px，左侧0 */
+  padding: 2vh 2vw 2vh 0; /* 使用视口单位替代固定像素 */
 }
 
 .card {
@@ -578,14 +736,95 @@ const closePreview = () => {
 }
 
 .section-title {
-  font-size: 18px;
+  font-size: 1.2rem; /* 改为相对单位 */
   font-weight: 600;
-  margin-bottom: 16px;
+  margin-bottom: 1rem; /* 改为相对单位 */
   color: #303133;
 }
 
 .param-form {
-  margin-top: 24px;
+  margin-top: 2vh; /* 改为视口高度的2% */
+}
+
+/* 数据库配置行样式 */
+.database-config-row {
+  display: flex;
+  align-items: flex-end;
+  gap: 1%;
+  margin-bottom: 1.5vh; /* 改为视口单位 */
+  flex-wrap: wrap;
+  min-height: 3vh; /* 改为视口高度的3% */
+}
+
+.db-type-item {
+  flex: 0 0 auto;
+  min-width: 200px;
+  width: auto;
+  margin-bottom: 0 !important;
+}
+
+.db-type-item .el-form-item__label {
+  white-space: nowrap !important;
+  min-width: fit-content !important;
+}
+
+.db-type-item .el-select {
+  width: 100%;
+  min-width: 200px; /* 确保下拉框有足够宽度显示内容 */
+}
+
+.db-path-item {
+  flex: 2;
+  min-width: 250px;
+  margin-bottom: 0 !important;
+}
+
+.db-path-item .el-form-item__label {
+  white-space: nowrap !important;
+  min-width: fit-content !important;
+}
+
+.db-path-item .el-input {
+  width: 100%;
+  min-width: 250px; /* 确保输入框有足够宽度 */
+}
+
+.db-path-item .el-input .el-input__inner {
+  text-overflow: clip; /* 不使用省略号，显示完整内容 */
+  white-space: nowrap;
+  overflow: visible; /* 允许内容溢出显示 */
+}
+
+.db-buttons {
+  display: flex !important; /* 强制显示按钮组 */
+  /* gap: 8px; */
+  flex: 0 0 auto;
+  align-items: center;
+  /* min-width: 180px; 确保按钮组有足够空间 */
+  visibility: visible; /* 确保可见性 */
+}
+
+.db-buttons .el-button {
+  white-space: nowrap;
+  height: 32px;
+  flex: 0 0 auto;
+  display: inline-block !important; /* 强制显示按钮 */
+  visibility: visible !important; /* 确保可见 */
+}
+
+/* 确保表单项标签对齐 */
+.database-config-row .el-form-item__label {
+  height: auto;
+  line-height: 1.2;
+  padding-bottom: 8px;
+  white-space: nowrap !important; /* 强制防止标签文字换行 */
+  min-width: fit-content; /* 确保标签有足够宽度 */
+  flex-shrink: 0; /* 防止标签被压缩 */
+}
+
+.database-config-row .el-form-item__content {
+  line-height: 1;
+  min-width: 0; /* 允许内容收缩 */
 }
 
 /* RAG 查询表单 - 垂直布局 */
@@ -594,13 +833,14 @@ const closePreview = () => {
 }
 
 .query-form .el-form-item {
-  margin-bottom: 20px; /* 增加组件间距 */
+  margin-bottom: 1.5vh; /* 改为视口高度的1.5% */
 }
 
 .query-form .el-input,
 .query-form .el-input-number {
-  width: 100%; /* 输入框占满宽度 */
-  max-width: 300px; /* 限制最大宽度 */
+  width: 100%;
+  max-width: 25vw; /* 改为视口宽度的25% */
+  min-width: 200px; /* 设置最小宽度确保可用性 */
 }
 
 .result-card {
@@ -677,16 +917,16 @@ const closePreview = () => {
 @media (max-width: 1024px) {
   .content {
     flex-direction: column;
-    gap: 16px;
-    padding: 16px;
+    gap: 2vh; /* 改为视口单位 */
+    padding: 1vh 1vw; /* 改为视口单位 */
   }
   
   .left-panel {
-    padding: 0 16px;
+    padding: 0 2vw; /* 改为视口单位 */
   }
   
   .right-panel {
-    padding: 0 16px;
+    padding: 0 2vw; /* 改为视口单位 */
   }
   
   .left-panel, .right-panel {
@@ -695,8 +935,8 @@ const closePreview = () => {
   }
   
   .header {
-    padding: 0 16px;
-    font-size: 18px;
+    padding: 0 2vw; /* 改为视口单位 */
+    font-size: 1.1rem; /* 改为相对单位 */
   }
   
   .logo {
@@ -707,16 +947,34 @@ const closePreview = () => {
     width: 95%;
     height: 90%;
   }
+  
+  /* 数据库配置在中等屏幕下的适配 */
+  .database-config-row {
+    gap: 2%;
+    flex-wrap: wrap;
+  }
+  
+  .db-type-item, .db-path-item {
+    min-width: 180px;
+    flex: 1 1 auto;
+  }
+  
+  .db-buttons {
+    display: flex !important; /* 确保按钮组在中等屏幕下也显示 */
+    flex: 0 0 auto;
+    min-width: 160px;
+    justify-content: flex-start;
+  }
 }
 
 @media (max-width: 768px) {
   .header {
-    height: 50px;
-    font-size: 16px;
+    height: 7vh; /* 改为视口高度的7% */
+    font-size: 1rem; /* 改为相对单位 */
   }
   
   .content {
-    padding: 12px;
+    padding: 1vh 1vw; /* 改为视口单位 */
   }
   
   .left-panel, .right-panel {
@@ -730,6 +988,7 @@ const closePreview = () => {
   .query-form .el-input,
   .query-form .el-input-number {
     max-width: 100%;
+    min-width: 150px; /* 确保最小可用宽度 */
   }
   
   .preview-modal {
@@ -738,11 +997,37 @@ const closePreview = () => {
   }
   
   .preview-header {
-    padding: 12px 16px;
+    padding: 1vh 2vw; /* 改为视口单位 */
   }
   
   .preview-title {
-    font-size: 14px;
+    font-size: 0.9rem; /* 改为相对单位 */
+  }
+  
+  /* 小屏幕下数据库配置的特殊处理 */
+  .database-config-row {
+    flex-direction: column;
+    gap: 1vh;
+    align-items: stretch;
+  }
+  
+  .db-type-item, .db-path-item, .db-buttons {
+    width: 100%;
+    min-width: auto;
+  }
+  
+  .db-type-item .el-form-item__label,
+  .db-path-item .el-form-item__label {
+    white-space: nowrap !important; /* 小屏幕下也确保不换行 */
+    overflow: visible !important;
+  }
+  
+  .db-buttons {
+    display: flex !important; /* 确保按钮组显示 */
+    justify-content: center;
+    margin-top: 1vh;
+    gap: 8px; /* 确保按钮间距 */
+    align-items: center; /* 垂直居中 */
   }
 }
 

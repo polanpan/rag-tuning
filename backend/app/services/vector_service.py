@@ -9,14 +9,29 @@ import uuid
 import os
 import asyncio
 
+# 导入配置模块
+from ..core.config import (
+    settings, 
+    get_database_config, 
+    get_milvus_connection_args, 
+    is_milvus_lite, 
+    get_db_type_display_name
+)
+
 class VectorService:
-    """基于 LangChain v0.3 的向量处理和存储服务"""
+    """基于 LangChain v0.3 的向量处理和存储服务 - 支持Milvus标准版和Lite版"""
     
     def __init__(self, model_name: str = "nomic", index_type: str = "hnsw", threshold: float = 0.5):
         self.model_name = model_name
         self.index_type = index_type
         self.threshold = threshold
         self.collection_name = "documents_v3"
+        
+        # 获取数据库配置
+        self.db_config = get_database_config()
+        self.is_lite = is_milvus_lite()
+        
+        print(f"初始化向量服务 - 数据库类型: {get_db_type_display_name()}")
         
         # 初始化嵌入模型
         self._init_embedding_model()
@@ -29,14 +44,8 @@ class VectorService:
     
     def _init_embedding_model(self):
         """初始化嵌入模型 (v0.3 语法)"""
-        # 根据模型名称选择对应的嵌入模型
-        model_mapping = {
-            "nomic": "sentence-transformers/all-MiniLM-L6-v2",
-            "all-MiniLM-L6-v2": "sentence-transformers/all-MiniLM-L6-v2",
-            "all-mpnet-base-v2": "sentence-transformers/all-mpnet-base-v2",
-            "bge-small": "BAAI/bge-small-en-v1.5"
-        }
-        
+        # 从配置获取模型映射
+        model_mapping = settings.embedding_models
         model_path = model_mapping.get(self.model_name, model_mapping["nomic"])
         
         try:
@@ -61,28 +70,51 @@ class VectorService:
             )
     
     def _connect_milvus(self):
-        """连接 Milvus 数据库"""
+        """连接 Milvus 数据库 - 支持标准版和Lite版"""
         try:
-            connections.connect(
-                alias="default",
-                host=os.getenv("MILVUS_HOST", "localhost"),
-                port=os.getenv("MILVUS_PORT", "19530"),
-                timeout=60
-            )
-            print("Milvus 连接成功")
+            connection_args = get_milvus_connection_args()
+            
+            if self.is_lite:
+                # 检查是否在支持的平台上
+                import platform
+                system = platform.system()
+                if system == "Windows":
+                    raise RuntimeError("Milvus Lite 目前不支持 Windows 系统。请使用 Milvus 标准版或在 Linux/macOS 环境下运行。")
+                
+                # Milvus Lite 连接
+                print(f"启动 Milvus Lite 服务，数据库路径: {connection_args['uri']}")
+                
+                # 尝试导入 milvus-lite
+                try:
+                    import milvus_lite
+                except ImportError:
+                    raise RuntimeError("milvus-lite 包未安装。请安装：pip install milvus-lite")
+                
+                # 连接到 Milvus Lite
+                connections.connect(
+                    alias="default",
+                    uri=connection_args['uri']
+                )
+                print("Milvus Lite 连接成功")
+            else:
+                # Milvus 标准版连接
+                print(f"连接 Milvus 标准版服务器: {connection_args['host']}:{connection_args['port']}")
+                connections.connect(**connection_args)
+                print("Milvus 标准版连接成功")
+                
         except Exception as e:
             print(f"Milvus 连接失败: {e}")
+            if self.is_lite:
+                print("Milvus Lite 连接失败，将在内存中模拟向量存储")
+                print("提示：在 Windows 环境下，请切换到 Milvus 标准版或使用 WSL/Docker")
+            else:
+                print("Milvus 标准版连接失败，请检查服务器状态")
             print("将在内存中模拟向量存储")
     
     def _init_vector_store(self):
-        """初始化向量存储 (v0.3 语法)"""
+        """初始化向量存储 (v0.3 语法) - 支持标准版和Lite版"""
         try:
-            # v0.3 中的 Milvus 配置
-            connection_args = {
-                "host": os.getenv("MILVUS_HOST", "localhost"),
-                "port": os.getenv("MILVUS_PORT", "19530"),
-                "alias": "default"
-            }
+            connection_args = get_milvus_connection_args()
             
             # v0.3 新的索引参数格式
             index_params = {
@@ -91,15 +123,32 @@ class VectorService:
                 "params": {"nlist": 128} if self.index_type.upper() == "IVF_FLAT" else {"M": 8, "efConstruction": 64}
             }
             
-            self.vector_store = Milvus(
-                embedding_function=self.embeddings,
-                collection_name=self.collection_name,
-                connection_args=connection_args,
-                index_params=index_params,
-                search_params={"metric_type": "COSINE", "params": {"ef": 64}},
-                drop_old=False  # v0.3 新增参数
-            )
-            print("向量存储初始化成功")
+            # 搜索参数
+            search_params = {"metric_type": "COSINE", "params": {"ef": 64}}
+            
+            # 根据数据库类型调整参数
+            if self.is_lite:
+                # Milvus Lite 特定配置
+                self.vector_store = Milvus(
+                    embedding_function=self.embeddings,
+                    collection_name=self.collection_name,
+                    connection_args={"uri": connection_args['uri']},
+                    index_params=index_params,
+                    search_params=search_params,
+                    drop_old=False  # v0.3 新增参数
+                )
+                print(f"Milvus Lite 向量存储初始化成功，集合: {self.collection_name}")
+            else:
+                # Milvus 标准版配置
+                self.vector_store = Milvus(
+                    embedding_function=self.embeddings,
+                    collection_name=self.collection_name,
+                    connection_args=connection_args,
+                    index_params=index_params,
+                    search_params=search_params,
+                    drop_old=False  # v0.3 新增参数
+                )
+                print(f"Milvus 标准版向量存储初始化成功，集合: {self.collection_name}")
             
         except Exception as e:
             print(f"向量存储初始化失败: {e}")
@@ -240,3 +289,23 @@ class VectorService:
             }
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    def get_database_info(self) -> Dict[str, Any]:
+        """获取数据库信息"""
+        return {
+            "db_type": self.db_config.db_type,
+            "db_type_display": get_db_type_display_name(),
+            "is_lite": self.is_lite,
+            "connection_status": "connected" if self.vector_store else "disconnected",
+            "config": {
+                "milvus_standard": {
+                    "host": self.db_config.milvus_standard.host,
+                    "port": self.db_config.milvus_standard.port,
+                    "timeout": self.db_config.milvus_standard.timeout,
+                } if not self.is_lite else None,
+                "milvus_lite": {
+                    "db_path": self.db_config.milvus_lite.db_path,
+                    "dim": self.db_config.milvus_lite.dim,
+                } if self.is_lite else None
+            }
+        }

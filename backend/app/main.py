@@ -1,12 +1,13 @@
 # backend/app/main.py
 from fastapi import FastAPI
-from app.api import upload, embed  # 新增embed
+from app.api import upload, embed, config  # 新增config
 from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
 app.include_router(upload.router, prefix="/api")
-app.include_router(embed.router, prefix="/api")  # 新增
+app.include_router(embed.router, prefix="/api")
+app.include_router(config.router, prefix="/api")  # 新增配置路由
 
 app.add_middleware(
     CORSMiddleware,
