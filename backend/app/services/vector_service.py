@@ -186,3 +186,221 @@ class VectorService:
                 } if self.is_lite else None
             }
         }
+
+    async def store_vectors(self, chunks: List[Dict[str, Any]]) -> List[str]:
+        """
+        存储文档块到向量数据库
+        
+        Args:
+            chunks: 文档块列表，每个块包含 'text' 和 'metadata' 字段
+            
+        Returns:
+            List[str]: 存储的向量ID列表
+        """
+        if not self.vector_store:
+            raise Exception("向量存储未初始化")
+        
+        if not chunks:
+            return []
+        
+        try:
+            # 将chunks转换为LangChain Document对象
+            documents = []
+            for chunk in chunks:
+                doc = Document(
+                    page_content=chunk.get('text', ''),
+                    metadata=chunk.get('metadata', {})
+                )
+                documents.append(doc)
+            
+            # 为每个文档生成唯一ID
+            vector_ids = [str(uuid.uuid4()) for _ in documents]
+            
+            # 批量添加文档到向量存储
+            await asyncio.to_thread(
+                self.vector_store.add_documents,
+                documents,
+                ids=vector_ids
+            )
+            
+            print(f"成功存储 {len(documents)} 个文档块到向量数据库")
+            return vector_ids
+            
+        except Exception as e:
+            print(f"存储向量失败: {e}")
+            raise Exception(f"向量存储失败: {str(e)}")
+
+    def get_collection_stats(self) -> Dict[str, Any]:
+        """
+        获取向量集合的统计信息
+        
+        Returns:
+            Dict: 包含集合统计信息的字典
+        """
+        try:
+            if not self.vector_store:
+                return {
+                    "collection_name": self.collection_name,
+                    "total_entities": 0,
+                    "status": "disconnected",
+                    "error": "向量存储未初始化"
+                }
+            
+            # 获取集合信息
+            try:
+                collection = Collection(self.collection_name)
+                collection.load()
+                
+                # 获取实体数量
+                total_entities = collection.num_entities
+                
+                # 获取集合schema信息
+                schema_info = {
+                    "fields": [
+                        {
+                            "name": field.name,
+                            "type": field.dtype.name,
+                            "description": field.description
+                        }
+                        for field in collection.schema.fields
+                    ]
+                }
+                
+                return {
+                    "collection_name": self.collection_name,
+                    "total_entities": total_entities,
+                    "status": "connected",
+                    "schema": schema_info,
+                    "index_type": self.index_type,
+                    "embedding_model": self.model_name,
+                    "database_type": get_db_type_display_name()
+                }
+                
+            except Exception as e:
+                # 如果集合不存在或其他错误，返回基本信息
+                return {
+                    "collection_name": self.collection_name,
+                    "total_entities": 0,
+                    "status": "empty",
+                    "index_type": self.index_type,
+                    "embedding_model": self.model_name,
+                    "database_type": get_db_type_display_name(),
+                    "message": "集合为空或尚未创建"
+                }
+                
+        except Exception as e:
+            print(f"获取集合统计信息失败: {e}")
+            return {
+                "collection_name": self.collection_name,
+                "total_entities": 0,
+                "status": "error",
+                "error": str(e)
+            }
+
+    async def search_similar(self, query: str, k: int = 5, filter_dict: Optional[Dict] = None) -> List[Dict[str, Any]]:
+        """
+        搜索相似文档
+        
+        Args:
+            query: 搜索查询字符串
+            k: 返回结果数量
+            filter_dict: 元数据过滤条件
+            
+        Returns:
+            List[Dict]: 搜索结果列表
+        """
+        if not self.vector_store:
+            raise Exception("向量存储未初始化")
+        
+        try:
+            # 构建搜索参数
+            search_kwargs = {"k": k}
+            if filter_dict:
+                search_kwargs["filter"] = filter_dict
+            
+            # 执行相似性搜索
+            results = await asyncio.to_thread(
+                self.vector_store.similarity_search_with_score,
+                query,
+                **search_kwargs
+            )
+            
+            # 格式化结果
+            formatted_results = []
+            for doc, score in results:
+                result = {
+                    "content": doc.page_content,
+                    "metadata": doc.metadata,
+                    "score": float(score),
+                    "similarity": 1.0 - float(score)  # 转换为相似度
+                }
+                formatted_results.append(result)
+            
+            print(f"搜索完成，返回 {len(formatted_results)} 个结果")
+            return formatted_results
+            
+        except Exception as e:
+            print(f"搜索失败: {e}")
+            raise Exception(f"向量搜索失败: {str(e)}")
+
+    async def delete_collection(self) -> bool:
+        """
+        删除整个集合
+        
+        Returns:
+            bool: 删除是否成功
+        """
+        try:
+            if utility.has_collection(self.collection_name):
+                utility.drop_collection(self.collection_name)
+                print(f"集合 {self.collection_name} 已删除")
+                return True
+            else:
+                print(f"集合 {self.collection_name} 不存在")
+                return False
+        except Exception as e:
+            print(f"删除集合失败: {e}")
+            return False
+
+    async def clear_collection(self) -> bool:
+        """
+        清空集合中的所有数据
+        
+        Returns:
+            bool: 清空是否成功
+        """
+        try:
+            if utility.has_collection(self.collection_name):
+                collection = Collection(self.collection_name)
+                # 删除所有实体
+                collection.delete(expr="pk >= 0")
+                print(f"集合 {self.collection_name} 已清空")
+                return True
+            else:
+                print(f"集合 {self.collection_name} 不存在")
+                return False
+        except Exception as e:
+            print(f"清空集合失败: {e}")
+            return False
+
+    def get_retriever(self, search_type: str = "similarity", search_kwargs: Optional[Dict] = None) -> VectorStoreRetriever:
+        """
+        获取向量存储检索器
+        
+        Args:
+            search_type: 搜索类型 ("similarity", "mmr", "similarity_score_threshold")
+            search_kwargs: 搜索参数
+            
+        Returns:
+            VectorStoreRetriever: LangChain检索器对象
+        """
+        if not self.vector_store:
+            raise Exception("向量存储未初始化")
+        
+        if search_kwargs is None:
+            search_kwargs = {"k": 5}
+        
+        return self.vector_store.as_retriever(
+            search_type=search_type,
+            search_kwargs=search_kwargs
+        )
