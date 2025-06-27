@@ -17,6 +17,7 @@ langchain-community==0.3.5
 langchain-milvus==0.1.6
 langchain-text-splitters==0.3.2
 langchain-core==0.3.15
+langchain-huggingface==0.1.0  # 新版本的 HuggingFace 嵌入支持
 
 # 嵌入模型
 sentence-transformers==3.0.1

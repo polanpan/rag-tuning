@@ -98,8 +98,7 @@ def get_milvus_connection_args() -> dict:
         connection_args = {
             "host": db_config.milvus_standard.host,
             "port": db_config.milvus_standard.port,
-            "timeout": db_config.milvus_standard.timeout,
-            "alias": "default"
+            "timeout": db_config.milvus_standard.timeout
         }
         
         # 添加认证信息（如果有）
