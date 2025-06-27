@@ -1,4 +1,4 @@
-﻿# backend/app/services/vector_service.py
+# backend/app/services/vector_service.py
 from typing import List, Dict, Any, Optional
 import warnings
 
