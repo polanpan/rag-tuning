@@ -13,6 +13,8 @@ class MilvusStandardConfig(BaseModel):
     password: Optional[str] = Field(default=None, description="密码")
     secure: bool = Field(default=False, description="是否使用安全连接")
     timeout: int = Field(default=60, description="连接超时时间")
+    database_name: str = Field(default="rag_tuning", description="数据库名称")
+    resource_group: str = Field(default="rag_tuning_resource", description="资源组名称")
 
 class MilvusLiteConfig(BaseModel):
     """Milvus Lite 配置"""
@@ -73,6 +75,15 @@ class AppConfig(BaseSettings):
     default_search_threshold: float = Field(default=0.5, description="默认搜索阈值")
     default_top_k: int = Field(default=5, description="默认返回结果数量")
     
+    # LLM配置
+    LLM_MODEL_TYPE: str = Field(default="deepseek", description="LLM模型类型: deepseek, ollama, local")
+    LLM_MODEL_NAME: str = Field(default="deepseek-chat", description="LLM模型名称")
+    DEEPSEEK_API_KEY: Optional[str] = Field(default=None, description="DeepSeek API密钥")
+    LLM_BASE_URL: str = Field(default="https://api.deepseek.com", description="LLM API基础URL")
+    OLLAMA_URL: str = Field(default="http://localhost:11434", description="Ollama服务URL")
+    LLM_MAX_TOKENS: int = Field(default=1000, description="LLM最大输出token数")
+    LLM_TIMEOUT: int = Field(default=30, description="LLM调用超时时间(秒)")
+    
     model_config = {
         "env_file": ".env",
         "env_file_encoding": "utf-8", 
@@ -98,7 +109,9 @@ def get_milvus_connection_args() -> dict:
         connection_args = {
             "host": db_config.milvus_standard.host,
             "port": db_config.milvus_standard.port,
-            "timeout": db_config.milvus_standard.timeout
+            "timeout": db_config.milvus_standard.timeout,
+            "database_name": db_config.milvus_standard.database_name,
+            "resource_group": db_config.milvus_standard.resource_group
         }
         
         # 添加认证信息（如果有）

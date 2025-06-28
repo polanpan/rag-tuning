@@ -28,6 +28,8 @@ pypdf==4.3.1
 python-docx==1.1.2
 unstructured==0.15.12
 tiktoken==0.8.0
+markdown==3.7
 
 # 其他工具
 numpy==1.26.4
+aiohttp==3.10.5  # 异步HTTP客户端，用于LLM API调用

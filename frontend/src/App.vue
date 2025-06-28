@@ -425,11 +425,46 @@ const queryParams = ref({
   temperature: 0.7
 })
 const queryResult = ref(null)
-const handleQuery = () => {
-  // TODO: 调用后端接口
-  queryResult.value = {
-    answer: '这是大模型生成的答案示例。',
-    docs: ['文档片段1', '文档片段2']
+const handleQuery = async () => {
+  if (!queryParams.value.question.trim()) {
+    ElMessage.warning('请输入问题')
+    return
+  }
+  
+  try {
+    ElMessage.info('正在查询中...')
+    
+    const response = await fetch('http://localhost:8001/api/query/', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        question: queryParams.value.question,
+        topk: queryParams.value.topk,
+        contextLen: queryParams.value.contextLen,
+        temperature: queryParams.value.temperature
+      })
+    })
+    
+    if (!response.ok) {
+      const errorData = await response.json()
+      throw new Error(errorData.detail || '查询失败')
+    }
+    
+    const result = await response.json()
+    queryResult.value = {
+      answer: result.answer,
+      docs: result.docs,
+      metadata: result.metadata
+    }
+    
+    ElMessage.success('查询完成！')
+    
+  } catch (error) {
+    console.error('查询失败:', error)
+    ElMessage.error(`查询失败: ${error.message}`)
+    queryResult.value = null
   }
 }
 

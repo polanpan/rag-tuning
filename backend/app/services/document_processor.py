@@ -2,8 +2,7 @@
 from typing import List, Dict, Any
 from langchain_community.document_loaders import (
     PyPDFLoader, 
-    TextLoader, 
-    UnstructuredMarkdownLoader
+    TextLoader
 )
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.documents import Document
@@ -39,11 +38,12 @@ class DocumentProcessor:
         try:
             if file_extension == '.pdf':
                 loader = PyPDFLoader(file_path)
-            elif file_extension == '.md':
-                loader = UnstructuredMarkdownLoader(
-                    file_path,
-                    mode="single",
-                    strategy="fast"
+            elif file_extension in ['.md', '.markdown']:
+                # 将Markdown文件当作文本文件处理，避免UnstructuredMarkdownLoader的依赖问题
+                loader = TextLoader(
+                    file_path, 
+                    encoding='utf-8',
+                    autodetect_encoding=True
                 )
             elif file_extension == '.txt':
                 loader = TextLoader(

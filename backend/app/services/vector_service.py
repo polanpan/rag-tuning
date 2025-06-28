@@ -39,7 +39,7 @@ class VectorService:
         self.model_name = model_name
         self.index_type = index_type
         self.threshold = threshold
-        self.collection_name = "documents_v3"
+        self.collection_name = "rag_tuning_docs"
         
         # 获取数据库配置
         self.db_config = get_database_config()
@@ -108,8 +108,11 @@ class VectorService:
                 connections.connect(alias="default", uri=connection_args['uri'])
                 print("Milvus Lite 连接成功")
             else:
-                # Milvus 标准版连接 - 修复：显式指定参数避免重复alias
+                # Milvus 标准版连接 - 添加数据库名称
+                db_name = connection_args.get('database_name', 'rag_tuning')
                 print(f"连接 Milvus 标准版服务器: {connection_args['host']}:{connection_args['port']}")
+                print(f"使用数据库: {db_name}")
+                
                 connections.connect(
                     alias="default",
                     host=connection_args['host'],
@@ -117,9 +120,10 @@ class VectorService:
                     timeout=connection_args.get('timeout', 60),
                     user=connection_args.get('user'),
                     password=connection_args.get('password'),
-                    secure=connection_args.get('secure', False)
+                    secure=connection_args.get('secure', False),
+                    db_name=db_name  # 指定数据库名称
                 )
-                print("Milvus 标准版连接成功")
+                print(f"Milvus 标准版连接成功，数据库: {db_name}")
                 
         except Exception as e:
             print(f"Milvus 连接失败: {e}")
@@ -141,7 +145,7 @@ class VectorService:
             if self.is_lite:
                 milvus_connection_args = {"uri": connection_args['uri']}
             else:
-                # 重新构建连接参数避免alias冲突
+                # 重新构建连接参数避免alias冲突，并添加数据库名称
                 milvus_connection_args = {
                     "host": connection_args['host'],
                     "port": connection_args['port']
@@ -152,6 +156,9 @@ class VectorService:
                     milvus_connection_args["password"] = connection_args['password']
                 if connection_args.get('secure'):
                     milvus_connection_args["secure"] = connection_args['secure']
+                # 添加数据库名称
+                if connection_args.get('database_name'):
+                    milvus_connection_args["db_name"] = connection_args['database_name']
                 
             self.vector_store = Milvus(
                 embedding_function=self.embeddings,
@@ -342,6 +349,67 @@ class VectorService:
         except Exception as e:
             print(f"搜索失败: {e}")
             raise Exception(f"向量搜索失败: {str(e)}")
+
+    async def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        """
+        RAG查询专用的文档搜索方法
+        
+        Args:
+            query: 用户查询
+            top_k: 返回的文档数量
+            
+        Returns:
+            List[Dict]: 搜索结果，包含content、source、score等字段
+        """
+        try:
+            # 调用相似性搜索
+            results = await self.search_similar(query, k=top_k)
+            
+            # 转换为RAG查询需要的格式
+            formatted_results = []
+            for result in results:
+                # 过滤掉相似度过低的结果
+                if result["similarity"] >= self.threshold:
+                    formatted_result = {
+                        "content": result["content"],
+                        "source": result["metadata"].get("source", "unknown"),
+                        "score": result["score"],
+                        "similarity": result["similarity"],
+                        "metadata": result["metadata"]
+                    }
+                    formatted_results.append(formatted_result)
+            
+            print(f"RAG搜索完成，过滤后返回 {len(formatted_results)} 个结果")
+            return formatted_results
+            
+        except Exception as e:
+            print(f"RAG文档搜索失败: {e}")
+            return []
+
+    async def health_check(self) -> Dict[str, Any]:
+        """
+        向量服务健康检查
+        """
+        try:
+            if not self.vector_store:
+                return {"status": "error", "message": "向量存储未初始化"}
+            
+            # 尝试执行一个简单的搜索来测试连接
+            test_results = await self.search_similar("test", k=1)
+            
+            return {
+                "status": "healthy",
+                "database_type": get_db_type_display_name(),
+                "collection_name": self.collection_name,
+                "embedding_model": self.model_name,
+                "test_search": "success"
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy", 
+                "error": str(e),
+                "database_type": get_db_type_display_name()
+            }
 
     async def delete_collection(self) -> bool:
         """
